@@ -2,6 +2,8 @@
 
 Neovim plugin for markdown like keybindings. Similar to notion, discord, slack etc
 
+![plugin demo](https://user-images.githubusercontent.com/5817809/211911652-fe0c1d26-1dd0-4832-b948-e685067bb78b.gif)
+
 ## Install
 
 ```lua
