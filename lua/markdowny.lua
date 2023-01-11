@@ -70,6 +70,9 @@ function M.link()
     local pos_end = vim.api.nvim_buf_get_mark(0, '>')
 
     vim.ui.input({ prompt = 'Href:' }, function(href)
+        if href == nil then
+            return
+        end
         surrounder(pos_start, pos_end, '[', '](' .. href .. ')')
     end)
 end
