@@ -16,8 +16,10 @@ use {
 }
 
 require('markdowny').setup()
--- lazy.nvim
+```
 
+```lua
+-- lazy.nvim
 {
     'antonk52/markdowny.nvim'
     config = function()
@@ -28,7 +30,7 @@ require('markdowny').setup()
 
 ## Setup Options
 
-- `filetypes` a table of filetypes to add the markdowny keybindings for. Default `{'markdown'}`
+- `filetypes` a table of filetypes to add markdowny keymaps. Default `{'markdown'}`
 
 ```lua
 require('markdowny').setup({filetypes = {'markdown', 'txt'}})
