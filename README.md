@@ -51,3 +51,7 @@ vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 
 vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
 vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
 ```
+
+## Acknowledgments
+
+This plugin uses `vim.ui.input` to prompt for link's href, to have it in a floating window, like in the demo above, you can use [dressing.nvim](https://github.com/stevearc/dressing.nvim).
