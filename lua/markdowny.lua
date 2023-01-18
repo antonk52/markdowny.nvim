@@ -1,19 +1,32 @@
 local M = {}
 
+-- cyrillic characters are double width
+local function is_double_char(str, idx)
+    local char = str:sub(idx, idx + 1)
+    local display_width = vim.fn.strdisplaywidth(char)
+
+    return #char ~= display_width
+end
+
 local function surrounder(pos_start, pos_end, before, after)
     local start_line = vim.api.nvim_buf_get_lines(0, pos_start[1] - 1, pos_start[1], true)[1]
 
     local is_same_line = pos_start[1] == pos_end[1]
+
     if is_same_line then
+        local first = start_line:sub(pos_start[2] + 1, pos_start[2] + #before) == before
+        local last = start_line:sub(pos_end[2] + 2 - #after, pos_end[2] + 1) == after
+        local is_removing = first and last
+
+        local idx_end = pos_end[2] + 1
+        if is_double_char(start_line, pos_end[2] + 1) then
+            idx_end = idx_end + 1
+        end
+
         local pre_selection = string.sub(start_line, 1, pos_start[2])
-        local the_selection = string.sub(start_line, pos_start[2] + 1, pos_end[2] + 1)
-        local post_selection = string.sub(start_line, pos_end[2] + 2)
+        local the_selection = string.sub(start_line, pos_start[2] + 1, idx_end)
+        local post_selection = string.sub(start_line, idx_end + 1)
 
-        local surrounder_len = #before + #after
-
-        local is_removing = vim.startswith(the_selection, before)
-            and vim.endswith(the_selection, after)
-            and #the_selection > surrounder_len
         if is_removing then
             local sub = string.sub(the_selection, 1 + #before, -1 - #after)
             start_line = pre_selection .. sub .. post_selection
@@ -24,23 +37,27 @@ local function surrounder(pos_start, pos_end, before, after)
         vim.api.nvim_buf_set_lines(0, pos_start[1] - 1, pos_start[1], true, { start_line })
     else
         local end_line = vim.api.nvim_buf_get_lines(0, pos_end[1] - 1, pos_end[1], true)[1]
-        local pre_end_line = string.sub(end_line, 1, pos_end[2] + 1)
-        local post_end_line = string.sub(end_line, pos_end[2] + 2)
+
+        local first = start_line:sub(pos_start[2] + 1, pos_start[2] + #before) == before
+        local last = end_line:sub(pos_end[2] + 2 - #after, pos_end[2] + 1) == after
+        local is_removing = first and last
+
+        local idx_end = pos_end[2] + 1
+
+        if is_double_char(end_line, pos_end[2]) then
+            idx_end = idx_end + 1
+        end
+
+        local pre_end_line = string.sub(end_line, 1, idx_end)
+        local post_end_line = string.sub(end_line, idx_end + 1)
 
         local pre_start_line = string.sub(start_line, 1, pos_start[2])
         local post_start_line = string.sub(start_line, pos_start[2] + 1)
 
-        vim.pretty_print({ pre_start_line, post_start_line })
-        vim.pretty_print({ pre_end_line, post_end_line })
-
-        local first = vim.startswith(post_start_line, before)
-        local last = vim.endswith(pre_end_line, after)
-        local is_removing = first and last
-
         if is_removing then
             -- remove **
-            start_line = pre_start_line .. string.sub(post_start_line, 1 + #before)
-            end_line = string.sub(pre_end_line, 1, -1 - #after) .. post_end_line
+            start_line = pre_start_line .. post_start_line:sub(1 + #before)
+            end_line = pre_end_line:sub(1, -1 - #after) .. post_end_line
         else
             -- add **
             start_line = pre_start_line .. before .. post_start_line
