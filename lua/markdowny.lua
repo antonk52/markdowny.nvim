@@ -8,6 +8,17 @@ local function is_double_char(str, idx)
     return #char ~= display_width
 end
 
+--- This update the '>' mark, which represents the end column
+--- position of the selection, in visual mode after adding or
+--- removing a surround, enabling the region to be reselected
+--- using the 'gv' command.
+---
+--- @param line number The line number of the mark to update.
+--- @param col  number The column/row number of the mark to update.
+local function update_end_selection_mark(line, col)
+    vim.api.nvim_buf_set_mark(0, '>', line, col, {})
+end
+
 local function surrounder(pos_start, pos_end, before, after)
     local start_line = vim.api.nvim_buf_get_lines(0, pos_start[1] - 1, pos_start[1], true)[1]
 
@@ -35,6 +46,9 @@ local function surrounder(pos_start, pos_end, before, after)
         end
 
         vim.api.nvim_buf_set_lines(0, pos_start[1] - 1, pos_start[1], true, { start_line })
+
+        -- Added #after and #before because both surrounds are on the same line.
+        update_end_selection_mark(pos_end[1], pos_end[2] + #after + #before)
     else
         local end_line = vim.api.nvim_buf_get_lines(0, pos_end[1] - 1, pos_end[1], true)[1]
 
@@ -66,6 +80,9 @@ local function surrounder(pos_start, pos_end, before, after)
 
         vim.api.nvim_buf_set_lines(0, pos_start[1] - 1, pos_start[1], true, { start_line })
         vim.api.nvim_buf_set_lines(0, pos_end[1] - 1, pos_end[1], true, { end_line })
+
+        -- Added only #after because surrounds are on different lines.
+        update_end_selection_mark(pos_end[1], pos_end[2] + #after)
     end
 end
 local function make_surrounder_function(before, after)
