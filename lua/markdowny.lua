@@ -92,6 +92,13 @@ local function make_surrounder_function(before, after)
         -- {line, col}
         local pos_end = vim.api.nvim_buf_get_mark(0, '>')
 
+        -- Manually count chars of last selected line in V-LINE mode due
+        -- to '>' reaching max int value. Address if it's neovim bug.
+        if vim.fn.visualmode() == 'V' then
+            local last_line = vim.api.nvim_buf_get_lines(0, pos_end[1] - 1, pos_end[1], true)[1]
+            pos_end[2] = #last_line - 1
+        end
+
         surrounder(pos_start, pos_end, before, after)
     end
 end
