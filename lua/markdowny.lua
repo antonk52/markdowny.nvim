@@ -111,14 +111,11 @@ M.bold = make_surrounder_function('**', '**')
 M.italic = make_surrounder_function('_', '_')
 
 function M.link()
-    local pos_start = vim.api.nvim_buf_get_mark(0, '<')
-    local pos_end = vim.api.nvim_buf_get_mark(0, '>')
-
     vim.ui.input({ prompt = 'Href:' }, function(href)
         if href == nil then
             return
         end
-        surrounder(pos_start, pos_end, '[', '](' .. href .. ')')
+        make_surrounder_function('[', '](' .. href .. ')')()
     end)
 end
 
