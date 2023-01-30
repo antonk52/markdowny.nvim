@@ -14,8 +14,6 @@ use {
         require('markdowny').setup()
     end
 }
-
-require('markdowny').setup()
 ```
 
 ```lua
