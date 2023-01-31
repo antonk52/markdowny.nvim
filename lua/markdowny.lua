@@ -1,121 +1,165 @@
 local M = {}
 
--- cyrillic characters are double width
-local function is_double_char(str, idx)
+---@private
+--- Counts if the Cyrillic character at the given index of
+--- the string is double width.
+---
+---@param str (string) The input string
+---@param idx (number) The index of the character to check
+---
+---@return (boolean) `true` if the character is double width, `false` otherwise
+local function __is_double_char(str, idx)
     local char = str:sub(idx, idx + 1)
     local display_width = vim.fn.strdisplaywidth(char)
 
     return #char ~= display_width
 end
 
---- This update the '>' mark, which represents the end column
+---@private
+--- Update the '>' mark, which represents the end column
 --- position of the selection, in visual mode after adding or
 --- removing a surround, enabling the region to be reselected
 --- using the 'gv' command.
 ---
---- @param line number The line number of the mark to update.
---- @param col  number The column/row number of the mark to update.
-local function update_end_selection_mark(line, col)
+---@param line (number) The line number of the mark to update.
+---@param col  (number) The column/row number of the mark to update.
+local function __update_end_selection_mark(line, col)
     vim.api.nvim_buf_set_mark(0, '>', line, col, {})
 end
 
-local function surrounder(pos_start, pos_end, before, after)
-    local start_line = vim.api.nvim_buf_get_lines(0, pos_start[1] - 1, pos_start[1], true)[1]
+---@private
+--- Gets a single line from the current buffer.
+---
+---@param line (number) The line number of current buffer.
+local function __buf_get_single_line(line)
+    return vim.api.nvim_buf_get_lines(0, line - 1, line, true)[1]
+end
 
-    local is_same_line = pos_start[1] == pos_end[1]
+---@private
+--- Replace a lines to the current buffer.
+---
+---@param line (number) line index from current buffer.
+---@param replacement (table) Array of lines to use as replacement
+local function __buf_set_lines(line, replacement)
+    vim.api.nvim_buf_set_lines(0, line - 1, line, true, replacement)
+end
+
+---@private
+--- Applies a specified surround text `before` and `after` at
+--- a specified position `start_pos` and `end_pos` within the
+--- current buffer.
+---
+---@param start_pos (table) The start position of text:
+---  - line: (number) Line index
+---  - col: (number) Column/row index
+---@param end_pos (table) The end position of text:
+---  - line: (number) Line index
+---  - col: (number) Column/row index
+---@param before (string) The string to insert before the selected text.
+---@param after (string) The string to insert after the selected text.
+local function __toggle_surround(start_pos, end_pos, before, after)
+    local start_line_txt = __buf_get_single_line(start_pos.line)
+    local end_line_txt = __buf_get_single_line(end_pos.line)
+
+    local is_same_line = start_pos.line == end_pos.line
+
+    local first = start_line_txt:sub(start_pos.col + 1, start_pos.col + #before) == before
+    local last = end_line_txt:sub(end_pos.col + 2 - #after, end_pos.col + 1) == after
+
+    local is_removing = first and last
+
+    local idx_end = end_pos.col + 1
+    if __is_double_char(start_line_txt, end_pos.col + 1) then
+        idx_end = idx_end + 1
+    end
 
     if is_same_line then
-        local first = start_line:sub(pos_start[2] + 1, pos_start[2] + #before) == before
-        local last = start_line:sub(pos_end[2] + 2 - #after, pos_end[2] + 1) == after
-        local is_removing = first and last
-
-        local idx_end = pos_end[2] + 1
-        if is_double_char(start_line, pos_end[2] + 1) then
-            idx_end = idx_end + 1
-        end
-
-        local pre_selection = string.sub(start_line, 1, pos_start[2])
-        local the_selection = string.sub(start_line, pos_start[2] + 1, idx_end)
-        local post_selection = string.sub(start_line, idx_end + 1)
-
-        if is_removing then
-            local sub = string.sub(the_selection, 1 + #before, -1 - #after)
-            start_line = pre_selection .. sub .. post_selection
-            -- Removed #after and #before because both surrounds are on the same line.
-            update_end_selection_mark(pos_end[1], pos_end[2] - #after - #before)
-        else
-            start_line = pre_selection .. before .. the_selection .. after .. post_selection
-            -- Added #after and #before because both surrounds are on the same line.
-            update_end_selection_mark(pos_end[1], pos_end[2] + #after + #before)
-        end
-
-        vim.api.nvim_buf_set_lines(0, pos_start[1] - 1, pos_start[1], true, { start_line })
-    else
-        local end_line = vim.api.nvim_buf_get_lines(0, pos_end[1] - 1, pos_end[1], true)[1]
-
-        local first = start_line:sub(pos_start[2] + 1, pos_start[2] + #before) == before
-        local last = end_line:sub(pos_end[2] + 2 - #after, pos_end[2] + 1) == after
-        local is_removing = first and last
-
-        local idx_end = pos_end[2] + 1
-
-        if is_double_char(end_line, pos_end[2]) then
-            idx_end = idx_end + 1
-        end
-
-        local pre_end_line = string.sub(end_line, 1, idx_end)
-        local post_end_line = string.sub(end_line, idx_end + 1)
-
-        local pre_start_line = string.sub(start_line, 1, pos_start[2])
-        local post_start_line = string.sub(start_line, pos_start[2] + 1)
+        local pre_selection = string.sub(start_line_txt, 1, start_pos.col)
+        local the_selection = string.sub(start_line_txt, start_pos.col + 1, idx_end)
+        local post_selection = string.sub(start_line_txt, idx_end + 1)
 
         if is_removing then
             -- remove **
-            start_line = pre_start_line .. post_start_line:sub(1 + #before)
-            end_line = pre_end_line:sub(1, -1 - #after) .. post_end_line
+            local sub = string.sub(the_selection, 1 + #before, -1 - #after)
+            start_line_txt = pre_selection .. sub .. post_selection
 
-            -- Removed only #after because surrounds are on different lines.
-            update_end_selection_mark(pos_end[1], pos_end[2] - #after)
+            -- Removed #after and #before because both surrounds are on the same line.
+            __update_end_selection_mark(end_pos.line, end_pos.col - #after - #before)
         else
             -- add **
-            start_line = pre_start_line .. before .. post_start_line
-            end_line = pre_end_line .. after .. post_end_line
+            start_line_txt = pre_selection .. before .. the_selection .. after .. post_selection
+
+            -- Added #after and #before because both surrounds are on the same line.
+            __update_end_selection_mark(end_pos.line, end_pos.col + #after + #before)
+        end
+
+        __buf_set_lines(start_pos.line, { start_line_txt })
+    else
+        local pre_end_line_txt = string.sub(end_line_txt, 1, idx_end)
+        local post_end_line_txt = string.sub(end_line_txt, idx_end + 1)
+
+        local pre_start_line_txt = string.sub(start_line_txt, 1, start_pos.col)
+        local post_start_line_txt = string.sub(start_line_txt, start_pos.col + 1)
+
+        if is_removing then
+            -- remove **
+            start_line_txt = pre_start_line_txt .. post_start_line_txt:sub(1 + #before)
+            end_line_txt = pre_end_line_txt:sub(1, -1 - #after) .. post_end_line_txt
+
+            -- Removed only #after because surrounds are on different lines.
+            __update_end_selection_mark(end_pos.line, end_pos.col - #after)
+        else
+            -- add **
+            start_line_txt = pre_start_line_txt .. before .. post_start_line_txt
+            end_line_txt = pre_end_line_txt .. after .. post_end_line_txt
 
             -- Added only #after because surrounds are on different lines.
-            update_end_selection_mark(pos_end[1], pos_end[2] + #after)
+            __update_end_selection_mark(end_pos.line, end_pos.col + #after)
         end
 
-        vim.api.nvim_buf_set_lines(0, pos_start[1] - 1, pos_start[1], true, { start_line })
-        vim.api.nvim_buf_set_lines(0, pos_end[1] - 1, pos_end[1], true, { end_line })
-    end
-end
-local function make_surrounder_function(before, after)
-    return function()
-        -- {line, col}
-        local pos_start = vim.api.nvim_buf_get_mark(0, '<')
-        -- {line, col}
-        local pos_end = vim.api.nvim_buf_get_mark(0, '>')
-
-        -- Manually count chars of last selected line in V-LINE mode due
-        -- to '>' reaching max int value. Address if it's neovim bug.
-        if vim.fn.visualmode() == 'V' then
-            local last_line = vim.api.nvim_buf_get_lines(0, pos_end[1] - 1, pos_end[1], true)[1]
-            pos_end[2] = #last_line - 1
-        end
-
-        surrounder(pos_start, pos_end, before, after)
+        __buf_set_lines(start_pos.line, { start_line_txt })
+        __buf_set_lines(end_pos.line, { end_line_txt })
     end
 end
 
-M.bold = make_surrounder_function('**', '**')
-M.italic = make_surrounder_function('_', '_')
+--- Wrap the selected text with "before" and "after" strings.
+---
+---@param before (string) The string to place before the selected text
+---@param after (string) The string to place after the selected text
+local function __wrap_sel_text(before, after)
+    local _start = vim.api.nvim_buf_get_mark(0, '<') -- [line, col]
+    local _end = vim.api.nvim_buf_get_mark(0, '>') -- [line, col]
 
+    local start_pos = { line = _start[1], col = _start[2] }
+    local end_pos = { line = _end[1], col = _end[2] }
+
+    -- Manually count chars of last selected line in V-LINE mode due
+    -- to '>' reaching max int value. Address if it's neovim bug.
+    if vim.fn.visualmode() == 'V' then
+        local end_line = __buf_get_single_line(end_pos.line)
+        end_pos.col = #end_line - 1
+    end
+
+    __toggle_surround(start_pos, end_pos, before, after)
+end
+
+--- Surrounds the selected text with '**'
+function M.bold()
+    __wrap_sel_text('**', '**')
+end
+
+--- Surrounds the selected text with '_'
+function M.italic()
+    __wrap_sel_text('_', '_')
+end
+
+--- Prompts the user for a link and surrounds the selected text
+--- with that link.
 function M.link()
     vim.ui.input({ prompt = 'Href:' }, function(href)
-        if href == nil then
-            return
+        if href ~= nil then
+            __wrap_sel_text('[', '](' .. href .. ')')
         end
-        make_surrounder_function('[', '](' .. href .. ')')()
     end)
 end
 
