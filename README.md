@@ -41,6 +41,7 @@ All in visual mode
 - `<C-k>` add link to visually selected text
 - `<C-b>` toggle visually selected text bold
 - `<C-i>` toggle visually selected text italic
+- `<C-e>` add a code toggle to visually selected text
 
 ## Custom setup
 

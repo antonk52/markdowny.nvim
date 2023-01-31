@@ -28,10 +28,22 @@ local function __update_end_selection_mark(line, col)
 end
 
 ---@private
+--- Update the '<' mark, which represents the start column
+--- position of the selection, in visual mode after adding or
+--- removing a surround, enabling the region to be reselected
+--- using the 'gv' command.
+---
+---@param line (number) The line number of the mark to update.
+---@param col  (number) The column/row number of the mark to update.
+local function __update_start_selection_mark(line, col)
+    vim.api.nvim_buf_set_mark(0, '<', line, col, {})
+end
+
+---@private
 --- Gets a single line from the current buffer.
 ---
 ---@param line (number) The line number of current buffer.
-local function __buf_get_single_line(line)
+local function __buf_get_line(line)
     return vim.api.nvim_buf_get_lines(0, line - 1, line, true)[1]
 end
 
@@ -40,7 +52,7 @@ end
 ---
 ---@param line (number) line index from current buffer.
 ---@param replacement (table) Array of lines to use as replacement
-local function __buf_set_lines(line, replacement)
+local function __buf_set_line(line, replacement)
     vim.api.nvim_buf_set_lines(0, line - 1, line, true, replacement)
 end
 
@@ -57,9 +69,12 @@ end
 ---  - col: (number) Column/row index
 ---@param before (string) The string to insert before the selected text.
 ---@param after (string) The string to insert after the selected text.
-local function __toggle_surround(start_pos, end_pos, before, after)
-    local start_line_txt = __buf_get_single_line(start_pos.line)
-    local end_line_txt = __buf_get_single_line(end_pos.line)
+---@param opts (nil|table) Optional keyword arguments:
+---  - newline: Add surrounds string "before" and "after" to newline
+--              In multi-line selection
+local function __toggle_surround(start_pos, end_pos, before, after, opts)
+    local start_line_txt = __buf_get_line(start_pos.line)
+    local end_line_txt = __buf_get_line(end_pos.line)
 
     local is_same_line = start_pos.line == end_pos.line
 
@@ -93,8 +108,13 @@ local function __toggle_surround(start_pos, end_pos, before, after)
             __update_end_selection_mark(end_pos.line, end_pos.col + #after + #before)
         end
 
-        __buf_set_lines(start_pos.line, { start_line_txt })
+        __buf_set_line(start_pos.line, { start_line_txt })
     else
+        local newline = false
+        if opts and opts.newline then
+            newline = opts.newline
+        end
+
         local pre_end_line_txt = string.sub(end_line_txt, 1, idx_end)
         local post_end_line_txt = string.sub(end_line_txt, idx_end + 1)
 
@@ -103,54 +123,87 @@ local function __toggle_surround(start_pos, end_pos, before, after)
 
         if is_removing then
             -- remove **
-            start_line_txt = pre_start_line_txt .. post_start_line_txt:sub(1 + #before)
-            end_line_txt = pre_end_line_txt:sub(1, -1 - #after) .. post_end_line_txt
+            if newline then
+                --- Removing lines
+                vim.cmd(start_pos.line .. 'd')
+                vim.cmd(end_pos.line - 1 .. 'd')
 
-            -- Removed only #after because surrounds are on different lines.
-            __update_end_selection_mark(end_pos.line, end_pos.col - #after)
+                __update_end_selection_mark(end_pos.line - 2, #pre_end_line_txt)
+
+                --- Change cursor position
+                vim.api.nvim_win_set_cursor(0, { end_pos.line - 2, 1 })
+            else
+                start_line_txt = pre_start_line_txt .. post_start_line_txt:sub(1 + #before)
+                end_line_txt = pre_end_line_txt:sub(1, -1 - #after) .. post_end_line_txt
+
+                -- Removed only #after because surrounds are on different lines.
+                __update_end_selection_mark(end_pos.line, end_pos.col - #after)
+            end
         else
             -- add **
-            start_line_txt = pre_start_line_txt .. before .. post_start_line_txt
-            end_line_txt = pre_end_line_txt .. after .. post_end_line_txt
+            if newline then
+                vim.api.nvim_buf_set_lines(0, start_pos.line - 1, start_pos.line - 1, false, { before })
+                __update_start_selection_mark(start_pos.line, 1)
+                vim.api.nvim_buf_set_lines(0, end_pos.line + 1, end_pos.line + 1, false, { after })
+                __update_end_selection_mark(end_pos.line + 2, #after)
+            else
+                start_line_txt = pre_start_line_txt .. before .. post_start_line_txt
+                end_line_txt = pre_end_line_txt .. after .. post_end_line_txt
 
-            -- Added only #after because surrounds are on different lines.
-            __update_end_selection_mark(end_pos.line, end_pos.col + #after)
+                -- Added only #after because surrounds are on different lines.
+                __update_end_selection_mark(end_pos.line, end_pos.col + #after)
+            end
         end
 
-        __buf_set_lines(start_pos.line, { start_line_txt })
-        __buf_set_lines(end_pos.line, { end_line_txt })
+        if not newline then
+            __buf_set_line(start_pos.line, { start_line_txt })
+            __buf_set_line(end_pos.line, { end_line_txt })
+        end
     end
 end
 
 --- Wrap the selected text with "before" and "after" strings.
 ---
----@param before (string) The string to place before the selected text
----@param after (string) The string to place after the selected text
-local function __wrap_sel_text(before, after)
+---@param sur (table) Single line surrounds
+---  - before: (string) The string to place before the selected text
+---  - after: (string) The string to place after the selected text
+---@param mln_sur (table?) Multi line surrounds
+---  - before: (string) The string to place before the selected text
+---  - after: (string) The string to place after the selected text
+---@param opts (nil|table) Optional keyword arguments:
+---  - newline: Add surrounds string "before" and "after" to newline
+--              In multi-line selection
+local function __wrap_sel_text(sur, mln_sur, opts)
     local _start = vim.api.nvim_buf_get_mark(0, '<') -- [line, col]
     local _end = vim.api.nvim_buf_get_mark(0, '>') -- [line, col]
 
     local start_pos = { line = _start[1], col = _start[2] }
     local end_pos = { line = _end[1], col = _end[2] }
 
-    -- Manually count chars of last selected line in V-LINE mode due
-    -- to '>' reaching max int value. Address if it's neovim bug.
+    local before, after = sur[1], sur[2]
+
     if vim.fn.visualmode() == 'V' then
-        local end_line = __buf_get_single_line(end_pos.line)
+        -- Manually count chars of last selected line in V-LINE mode due
+        -- to '>' reaching max int value. Address if it's neovim bug.
+        local end_line = __buf_get_line(end_pos.line)
         end_pos.col = #end_line - 1
+
+        if mln_sur then
+            before, after = mln_sur[1], mln_sur[2]
+        end
     end
 
-    __toggle_surround(start_pos, end_pos, before, after)
+    __toggle_surround(start_pos, end_pos, before, after, opts)
 end
 
 --- Surrounds the selected text with '**'
 function M.bold()
-    __wrap_sel_text('**', '**')
+    __wrap_sel_text({ '**', '**' })
 end
 
 --- Surrounds the selected text with '_'
 function M.italic()
-    __wrap_sel_text('_', '_')
+    __wrap_sel_text({ '_', '_' })
 end
 
 --- Prompts the user for a link and surrounds the selected text
@@ -158,9 +211,15 @@ end
 function M.link()
     vim.ui.input({ prompt = 'Href:' }, function(href)
         if href ~= nil then
-            __wrap_sel_text('[', '](' .. href .. ')')
+            __wrap_sel_text({ '[', '](' .. href .. ')' })
         end
     end)
+end
+
+--- Surrounds the selected text with '`' and '```' for multi-line
+--- selections (V-LINE).
+function M.code()
+    __wrap_sel_text({ '`', '`' }, { '```', '```' }, { newline = true })
 end
 
 function M.setup(opts)
@@ -172,6 +231,7 @@ function M.setup(opts)
         callback = function()
             vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
+            vim.keymap.set('v', '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
         end,
     })
