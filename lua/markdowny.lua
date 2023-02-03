@@ -109,6 +109,7 @@ end
 
 M.bold = make_surrounder_function('**', '**')
 M.italic = make_surrounder_function('_', '_')
+M.inline_code = make_surrounder_function('`', '`')
 
 function M.link()
     vim.ui.input({ prompt = 'Href:' }, function(href)
@@ -129,6 +130,7 @@ function M.setup(opts)
             vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
+            vim.keymap.set('v', '<C-c>', ":lua require('markdowny').inline_code()<cr>", { buffer = 0 })
         end,
     })
 end
