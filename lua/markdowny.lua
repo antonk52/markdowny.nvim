@@ -206,6 +206,7 @@ function M.italic()
     __wrap_sel_text({ '_', '_' })
 end
 
+
 --- Prompts the user for a link and surrounds the selected text
 --- with that link.
 function M.link()
@@ -233,6 +234,7 @@ function M.setup(opts)
             vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
+            vim.keymap.set('v', '<C-c>', ":lua require('markdowny').inline_code()<cr>", { buffer = 0 })
         end,
     })
 end
