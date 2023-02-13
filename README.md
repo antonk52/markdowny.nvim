@@ -41,8 +41,7 @@ All in visual mode
 - `<C-k>` add link to visually selected text
 - `<C-b>` toggle visually selected text bold
 - `<C-i>` toggle visually selected text italic
-- `<C-e>` add a code toggle to visually selected text
-
+- `<C-c>` add a code toggle to visually selected text
 
 ## Custom setup
 
@@ -52,7 +51,7 @@ Alternatively to default keymaps you can use custom keymaps. Make sure to keymap
 vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0 })
 vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
 vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
-vim.keymap.set('v', '<C-c>', ":lua require('markdowny').inline_code()<cr>", { buffer = 0 })
+vim.keymap.set('v', '<C-c>', ":lua require('markdowny').code()<cr>", { buffer = 0 })
 ```
 
 ## Acknowledgments
