@@ -266,7 +266,7 @@ function M.italic()
     inline_surround('_', '_')
 end
 
-function M.inline_code()
+function M.code()
     if vim.fn.visualmode() == 'V' then
         newline_surround('```', '```')
     else
@@ -283,6 +283,13 @@ function M.link()
     end)
 end
 
+function M.inline_code()
+    vim.notify(
+        "[markdowny.nvim] 'inline_code' has been deprecated. Please use 'code' function instead.",
+        vim.log.levels.WARN
+    )
+end
+
 --[====================================================================================================================[
                                                    Setup Function
 --]====================================================================================================================]
@@ -297,7 +304,7 @@ function M.setup(opts)
             vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
             vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
-            vim.keymap.set('v', '<C-c>', ":lua require('markdowny').inline_code()<cr>", { buffer = 0 })
+            vim.keymap.set('v', '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0 })
         end,
     })
 end
