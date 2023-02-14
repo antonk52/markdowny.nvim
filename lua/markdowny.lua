@@ -132,11 +132,25 @@ end
                                                  Surround helper functions
 --]====================================================================================================================]
 
--- Applies a specified surround text `before` and `after` at
--- a selected within the current buffer.
+-- Parse optional argument.
+---@param opts table|nil optional keyword arguments table
+---@param key string key of argumnet
+---@param default any default value
+---@return any @The value of parameter.
+local parse_arg = function(opts, key, default)
+    if opts and opts[key] ~= nil then
+        return opts[key]
+    else
+        return default
+    end
+end
+
+-- Applies a specified surround text `before` and `after` at a selected within the current buffer.
 ---@param before string The string to insert before the selected text.
 ---@param after string The string to insert after the selected text.
-local inline_surround = function(before, after)
+---@param opts table|nil Optional keyword arguments:
+--- - remove: Remove surround if possible (default true).
+local inline_surround = function(before, after, opts)
     local s = get_first_byte(get_mark('<'))
     local e = get_last_byte(get_mark('>'))
 
@@ -150,13 +164,16 @@ local inline_surround = function(before, after)
         e[2] = #get_line(e[1])
     end
 
+    -- Parsing Options
+    local remove = parse_arg(opts, 'remove', true)
+
     local selection = { first_pos = s, last_pos = e }
     local text = get_text(selection)
 
     local first = text[1]:sub(1, #before) == before
     local last = text[#text]:sub(-#after) == after
 
-    local is_removing = first and last
+    local is_removing = first and last and remove
     local is_sameline = s[1] == e[1]
 
     if is_removing then
@@ -185,11 +202,12 @@ local inline_surround = function(before, after)
     set_mark('>', e)
 end
 
--- Applies a specified surround text `before` and `after` at
--- a selected within the current buffer.
+-- Applies a specified surround text `before` and `after` text to the selected newline within the current buffer.
 ---@param before string The string to insert before the selected text.
 ---@param after string The string to insert after the selected text.
-local newline_surround = function(before, after)
+---@param opts table|nil Optional keyword arguments:
+--- - remove: Remove surround if possible (default true).
+local newline_surround = function(before, after, opts)
     local s = get_first_byte(get_mark('<'))
     local e = get_last_byte(get_mark('>'))
 
@@ -203,13 +221,16 @@ local newline_surround = function(before, after)
         e[2] = #get_line(e[1])
     end
 
+    -- Parsing Options
+    local remove = parse_arg(opts, 'remove', true)
+
     local selection = { first_pos = s, last_pos = e }
     local text = get_text(selection)
 
     local first = text[1] == before
     local last = text[#text] == after
 
-    local is_removing = first and last
+    local is_removing = first and last and remove
 
     if is_removing then
         delete_line(s[1])
@@ -258,7 +279,7 @@ function M.link()
         if href == nil then
             return
         end
-        inline_surround('[', '](' .. href .. ')')
+        inline_surround('[', '](' .. href .. ')', { remove = false })
     end)
 end
 
