@@ -1,124 +1,270 @@
 local M = {}
 
--- cyrillic characters are double width
-local function is_double_char(str, idx)
-    local char = str:sub(idx, idx + 1)
-    local display_width = vim.fn.strdisplaywidth(char)
+--[====================================================================================================================[
+                                            Buffer contents helper functions
+--]====================================================================================================================]
 
-    return #char ~= display_width
+-- Gets a line from the buffer, 1-indexed.
+---@param line_num integer The number of the line to be retrieved.
+---@return string @The contents of the line that was retrieved.
+---@nodiscard
+local get_line = function(line_num)
+    return vim.api.nvim_buf_get_lines(0, line_num - 1, line_num, false)[1]
 end
 
---- This update the '>' mark, which represents the end column
---- position of the selection, in visual mode after adding or
---- removing a surround, enabling the region to be reselected
---- using the 'gv' command.
----
---- @param line number The line number of the mark to update.
---- @param col  number The column/row number of the mark to update.
-local function update_end_selection_mark(line, col)
-    vim.api.nvim_buf_set_mark(0, '>', line, col, {})
+-- Delete a line from the buffer, 1-indexed.
+---@param line_num integer The number of the line to be deleted.
+---@nodiscard
+local delete_line = function(line_num)
+    vim.api.nvim_buf_set_lines(0, line_num - 1, line_num, true, {})
 end
 
-local function surrounder(pos_start, pos_end, before, after)
-    local start_line = vim.api.nvim_buf_get_lines(0, pos_start[1] - 1, pos_start[1], true)[1]
+-- Gets a selection of text from the buffer.
+---@param selection selection The selection of text to be retrieved.
+---@return text @The text from the buffer.
+---@nodiscard
+local get_text = function(selection)
+    local first_pos, last_pos = selection.first_pos, selection.last_pos
+    last_pos[2] = math.min(last_pos[2], #get_line(last_pos[1]))
+    return vim.api.nvim_buf_get_text(0, first_pos[1] - 1, first_pos[2] - 1, last_pos[1] - 1, last_pos[2], {})
+end
 
-    local is_same_line = pos_start[1] == pos_end[1]
+-- Adds some text into the buffer at a given position.
+---@param pos position The position to be inserted at.
+---@param text text The text to be added.
+local insert_text = function(pos, text)
+    pos[2] = math.min(pos[2], #get_line(pos[1]) + 1)
+    vim.api.nvim_buf_set_text(0, pos[1] - 1, pos[2] - 1, pos[1] - 1, pos[2] - 1, text)
+end
 
-    if is_same_line then
-        local first = start_line:sub(pos_start[2] + 1, pos_start[2] + #before) == before
-        local last = start_line:sub(pos_end[2] + 2 - #after, pos_end[2] + 1) == after
-        local is_removing = first and last
+-- Replaces a given selection with a set of lines.
+---@param selection? selection The given selection.
+---@param text text The given text to replace the selection.
+local change_text = function(selection, text)
+    if not selection then
+        return
+    end
+    local first_pos, last_pos = selection.first_pos, selection.last_pos
+    vim.api.nvim_buf_set_text(0, first_pos[1] - 1, first_pos[2] - 1, last_pos[1] - 1, last_pos[2], text)
+end
 
-        local idx_end = pos_end[2] + 1
-        if is_double_char(start_line, pos_end[2] + 1) then
-            idx_end = idx_end + 1
-        end
+--[====================================================================================================================[
+                                                 Cursor helper functions
+--]====================================================================================================================]
 
-        local pre_selection = string.sub(start_line, 1, pos_start[2])
-        local the_selection = string.sub(start_line, pos_start[2] + 1, idx_end)
-        local post_selection = string.sub(start_line, idx_end + 1)
+-- Sets the position of the cursor, 1-indexed.
+---@param pos position? The given position.
+local set_curpos = function(pos)
+    if not pos then
+        return
+    end
+    vim.api.nvim_win_set_cursor(0, { pos[1], pos[2] - 1 })
+end
 
-        if is_removing then
-            local sub = string.sub(the_selection, 1 + #before, -1 - #after)
-            start_line = pre_selection .. sub .. post_selection
-            -- Removed #after and #before because both surrounds are on the same line.
-            update_end_selection_mark(pos_end[1], pos_end[2] - #after - #before)
+--[====================================================================================================================[
+                                                 Mark helper functions
+--]====================================================================================================================]
+
+-- Gets the row and column for a mark, 1-indexed, if it exists, returns nil otherwise.
+---@param mark string The mark whose position will be returned.
+---@return position @The position of the mark.
+---@nodiscard
+local get_mark = function(mark)
+    local position = vim.api.nvim_buf_get_mark(0, mark)
+    return { position[1], position[2] + 1 }
+end
+
+-- Sets the position of a mark, 1-indexed.
+---@param mark string The mark whose position will be returned.
+---@param position position? The position that the mark should be set to.
+local set_mark = function(mark, position)
+    if position then
+        vim.api.nvim_buf_set_mark(0, mark, position[1], position[2] - 1, {})
+    end
+end
+
+--[====================================================================================================================[
+                                             Byte indexing helper functions
+--]====================================================================================================================]
+
+-- Gets the position of the first byte of a character, according to the UTF-8 standard.
+---@param pos position The position of any byte in the character.
+---@return position @The position of the first byte of the character.
+---@nodiscard
+local get_first_byte = function(pos)
+    local byte = string.byte(get_line(pos[1]):sub(pos[2], pos[2]))
+    if not byte then
+        return pos
+    end
+    -- See https://en.wikipedia.org/wiki/UTF-8#Encoding
+    while byte >= 0x80 and byte < 0xc0 do
+        pos[2] = pos[2] - 1
+        byte = string.byte(get_line(pos[1]):sub(pos[2], pos[2]))
+    end
+    return pos
+end
+
+-- Gets the position of the last byte of a character, according to the UTF-8 standard.
+---@param pos position? The position of the beginning of the character.
+---@return position? @The position of the last byte of the character.
+---@nodiscard
+local get_last_byte = function(pos)
+    if not pos then
+        return nil
+    end
+
+    local byte = string.byte(get_line(pos[1]):sub(pos[2], pos[2]))
+    if not byte then
+        return pos
+    end
+    -- See https://en.wikipedia.org/wiki/UTF-8#Encoding
+    if byte >= 0xf0 then
+        pos[2] = pos[2] + 3
+    elseif byte >= 0xe0 then
+        pos[2] = pos[2] + 2
+    elseif byte >= 0xc0 then
+        pos[2] = pos[2] + 1
+    end
+    return pos
+end
+
+--[====================================================================================================================[
+                                                 Surround helper functions
+--]====================================================================================================================]
+
+-- Applies a specified surround text `before` and `after` at
+-- a selected within the current buffer.
+---@param before string The string to insert before the selected text.
+---@param after string The string to insert after the selected text.
+local inline_surround = function(before, after)
+    local s = get_first_byte(get_mark('<'))
+    local e = get_last_byte(get_mark('>'))
+
+    if s == nil or e == nil then
+        return
+    end
+
+    -- Manually count chars of last selected line in V-LINE mode due
+    -- to '>' reaching max int value. Address if it's neovim bug.
+    if vim.fn.visualmode() == 'V' then
+        e[2] = #get_line(e[1])
+    end
+
+    local selection = { first_pos = s, last_pos = e }
+    local text = get_text(selection)
+
+    local first = text[1]:sub(1, #before) == before
+    local last = text[#text]:sub(-#after) == after
+
+    local is_removing = first and last
+    local is_sameline = s[1] == e[1]
+
+    if is_removing then
+        text[1] = text[1]:sub(#before + 1, -1)
+        text[#text] = text[#text]:sub(1, -#after - 1)
+
+        change_text(selection, text)
+
+        if is_sameline then
+            e[2] = e[2] - #before - #after
         else
-            start_line = pre_selection .. before .. the_selection .. after .. post_selection
-            -- Added #after and #before because both surrounds are on the same line.
-            update_end_selection_mark(pos_end[1], pos_end[2] + #after + #before)
+            e[2] = e[2] - #after
         end
-
-        vim.api.nvim_buf_set_lines(0, pos_start[1] - 1, pos_start[1], true, { start_line })
     else
-        local end_line = vim.api.nvim_buf_get_lines(0, pos_end[1] - 1, pos_end[1], true)[1]
+        insert_text(s, { before })
+        e[2] = e[2] + 1
 
-        local first = start_line:sub(pos_start[2] + 1, pos_start[2] + #before) == before
-        local last = end_line:sub(pos_end[2] + 2 - #after, pos_end[2] + 1) == after
-        local is_removing = first and last
-
-        local idx_end = pos_end[2] + 1
-
-        if is_double_char(end_line, pos_end[2]) then
-            idx_end = idx_end + 1
+        if is_sameline then
+            e[2] = e[2] + #before
         end
 
-        local pre_end_line = string.sub(end_line, 1, idx_end)
-        local post_end_line = string.sub(end_line, idx_end + 1)
-
-        local pre_start_line = string.sub(start_line, 1, pos_start[2])
-        local post_start_line = string.sub(start_line, pos_start[2] + 1)
-
-        if is_removing then
-            -- remove **
-            start_line = pre_start_line .. post_start_line:sub(1 + #before)
-            end_line = pre_end_line:sub(1, -1 - #after) .. post_end_line
-
-            -- Removed only #after because surrounds are on different lines.
-            update_end_selection_mark(pos_end[1], pos_end[2] - #after)
-        else
-            -- add **
-            start_line = pre_start_line .. before .. post_start_line
-            end_line = pre_end_line .. after .. post_end_line
-
-            -- Added only #after because surrounds are on different lines.
-            update_end_selection_mark(pos_end[1], pos_end[2] + #after)
-        end
-
-        vim.api.nvim_buf_set_lines(0, pos_start[1] - 1, pos_start[1], true, { start_line })
-        vim.api.nvim_buf_set_lines(0, pos_end[1] - 1, pos_end[1], true, { end_line })
+        insert_text(e, { after })
+        e[2] = e[2] + #after - 1
     end
-end
-local function make_surrounder_function(before, after)
-    return function()
-        -- {line, col}
-        local pos_start = vim.api.nvim_buf_get_mark(0, '<')
-        -- {line, col}
-        local pos_end = vim.api.nvim_buf_get_mark(0, '>')
 
-        -- Manually count chars of last selected line in V-LINE mode due
-        -- to '>' reaching max int value. Address if it's neovim bug.
-        if vim.fn.visualmode() == 'V' then
-            local last_line = vim.api.nvim_buf_get_lines(0, pos_end[1] - 1, pos_end[1], true)[1]
-            pos_end[2] = #last_line - 1
-        end
-
-        surrounder(pos_start, pos_end, before, after)
-    end
+    set_mark('>', e)
 end
 
-M.bold = make_surrounder_function('**', '**')
-M.italic = make_surrounder_function('_', '_')
-M.inline_code = make_surrounder_function('`', '`')
+-- Applies a specified surround text `before` and `after` at
+-- a selected within the current buffer.
+---@param before string The string to insert before the selected text.
+---@param after string The string to insert after the selected text.
+local newline_surround = function(before, after)
+    local s = get_first_byte(get_mark('<'))
+    local e = get_last_byte(get_mark('>'))
+
+    if s == nil or e == nil then
+        return
+    end
+
+    -- Manually count chars of last selected line in V-LINE mode due
+    -- to '>' reaching max int value. Address if it's neovim bug.
+    if vim.fn.visualmode() == 'V' then
+        e[2] = #get_line(e[1])
+    end
+
+    local selection = { first_pos = s, last_pos = e }
+    local text = get_text(selection)
+
+    local first = text[1] == before
+    local last = text[#text] == after
+
+    local is_removing = first and last
+
+    if is_removing then
+        delete_line(s[1])
+        e[1] = e[1] - 1
+
+        delete_line(e[1])
+        e[1] = e[1] - 1
+
+        set_mark('>', { e[1], #text[#text - 1] - 1 })
+        set_curpos({ e[1], 1 })
+    else
+        insert_text(s, { before, '' })
+        s = { s[1], 1 }
+        set_mark('<', s)
+
+        e = { e[1] + 1, e[2] + 1 }
+        insert_text(e, { '', after })
+        e = { e[1] + 1, #after }
+        set_mark('>', e)
+
+        set_curpos({ e[1] - 1, 1 })
+    end
+end
+--[====================================================================================================================[
+                                               Markdown surround functions
+--]====================================================================================================================]
+
+function M.bold()
+    inline_surround('**', '**')
+end
+
+function M.italic()
+    inline_surround('_', '_')
+end
+
+function M.inline_code()
+    if vim.fn.visualmode() == 'V' then
+        newline_surround('```', '```')
+    else
+        inline_surround('`', '`')
+    end
+end
 
 function M.link()
     vim.ui.input({ prompt = 'Href:' }, function(href)
         if href == nil then
             return
         end
-        make_surrounder_function('[', '](' .. href .. ')')()
+        inline_surround('[', '](' .. href .. ')')
     end)
 end
+
+--[====================================================================================================================[
+                                                   Setup Function
+--]====================================================================================================================]
 
 function M.setup(opts)
     opts = opts or {}
