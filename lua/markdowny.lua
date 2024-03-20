@@ -301,10 +301,10 @@ function M.setup(opts)
         desc = 'markdowny.nvim keymaps',
         pattern = opts.filetypes or 'markdown',
         callback = function()
-            vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0 })
-            vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
-            vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
-            vim.keymap.set('v', '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0 })
+            vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0, silent = true })
+            vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0, silent = true })
+            vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0, silent = true })
+            vim.keymap.set('v', '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0, silent = true })
         end,
     })
 end
