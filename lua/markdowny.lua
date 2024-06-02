@@ -1,5 +1,11 @@
 local M = {}
 
+---@alias Position [ integer, integer ]
+
+---@class Selection
+---@field first_pos Position The first position of the selection.
+---@field last_pos Position The last position of the selection.
+
 --[====================================================================================================================[
                                             Buffer contents helper functions
 --]====================================================================================================================]
@@ -14,14 +20,13 @@ end
 
 -- Delete a line from the buffer, 1-indexed.
 ---@param line_num integer The number of the line to be deleted.
----@nodiscard
 local delete_line = function(line_num)
     vim.api.nvim_buf_set_lines(0, line_num - 1, line_num, true, {})
 end
 
 -- Gets a selection of text from the buffer.
----@param selection selection The selection of text to be retrieved.
----@return text @The text from the buffer.
+---@param selection Selection The selection of text to be retrieved.
+---@return string[] @The text from the buffer.
 ---@nodiscard
 local get_text = function(selection)
     local first_pos, last_pos = selection.first_pos, selection.last_pos
@@ -30,16 +35,16 @@ local get_text = function(selection)
 end
 
 -- Adds some text into the buffer at a given position.
----@param pos position The position to be inserted at.
----@param text text The text to be added.
+---@param pos Position The position to be inserted at.
+---@param text string[] The text to be added.
 local insert_text = function(pos, text)
     pos[2] = math.min(pos[2], #get_line(pos[1]) + 1)
     vim.api.nvim_buf_set_text(0, pos[1] - 1, pos[2] - 1, pos[1] - 1, pos[2] - 1, text)
 end
 
 -- Replaces a given selection with a set of lines.
----@param selection? selection The given selection.
----@param text text The given text to replace the selection.
+---@param selection? Selection The given selection.
+---@param text string[] The given text to replace the selection.
 local change_text = function(selection, text)
     if not selection then
         return
@@ -53,7 +58,7 @@ end
 --]====================================================================================================================]
 
 -- Sets the position of the cursor, 1-indexed.
----@param pos position? The given position.
+---@param pos Position? The given position.
 local set_curpos = function(pos)
     if not pos then
         return
@@ -67,7 +72,7 @@ end
 
 -- Gets the row and column for a mark, 1-indexed, if it exists, returns nil otherwise.
 ---@param mark string The mark whose position will be returned.
----@return position @The position of the mark.
+---@return Position @The position of the mark.
 ---@nodiscard
 local get_mark = function(mark)
     local position = vim.api.nvim_buf_get_mark(0, mark)
@@ -76,7 +81,7 @@ end
 
 -- Sets the position of a mark, 1-indexed.
 ---@param mark string The mark whose position will be returned.
----@param position position? The position that the mark should be set to.
+---@param position Position? The position that the mark should be set to.
 local set_mark = function(mark, position)
     if position then
         vim.api.nvim_buf_set_mark(0, mark, position[1], position[2] - 1, {})
@@ -88,8 +93,8 @@ end
 --]====================================================================================================================]
 
 -- Gets the position of the first byte of a character, according to the UTF-8 standard.
----@param pos position The position of any byte in the character.
----@return position @The position of the first byte of the character.
+---@param pos Position The position of any byte in the character.
+---@return Position @The position of the first byte of the character.
 ---@nodiscard
 local get_first_byte = function(pos)
     local byte = string.byte(get_line(pos[1]):sub(pos[2], pos[2]))
@@ -105,8 +110,8 @@ local get_first_byte = function(pos)
 end
 
 -- Gets the position of the last byte of a character, according to the UTF-8 standard.
----@param pos position? The position of the beginning of the character.
----@return position? @The position of the last byte of the character.
+---@param pos Position? The position of the beginning of the character.
+---@return Position? @The position of the last byte of the character.
 ---@nodiscard
 local get_last_byte = function(pos)
     if not pos then
