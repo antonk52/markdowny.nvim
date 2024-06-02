@@ -28,7 +28,7 @@ use {
 
 ## Setup Options
 
-- `filetypes` a table of filetypes to add markdowny keymaps. Default `{'markdown'}`
+- `filetypes` a table of filetypes to add markdowny keymaps. Default `{'markdown', 'gitcommit', 'hgcommit'}`
 
 ```lua
 require('markdowny').setup({filetypes = {'markdown', 'txt'}})
