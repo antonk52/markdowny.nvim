@@ -6,10 +6,6 @@ local M = {}
 ---@field first_pos Position The first position of the selection.
 ---@field last_pos Position The last position of the selection.
 
---[====================================================================================================================[
-                                            Buffer contents helper functions
---]====================================================================================================================]
-
 -- Gets a line from the buffer, 1-indexed.
 ---@param line_num integer The number of the line to be retrieved.
 ---@return string @The contents of the line that was retrieved.
@@ -24,16 +20,6 @@ local delete_line = function(line_num)
     vim.api.nvim_buf_set_lines(0, line_num - 1, line_num, true, {})
 end
 
--- Gets a selection of text from the buffer.
----@param selection Selection The selection of text to be retrieved.
----@return string[] @The text from the buffer.
----@nodiscard
-local get_text = function(selection)
-    local first_pos, last_pos = selection.first_pos, selection.last_pos
-    last_pos[2] = math.min(last_pos[2], #get_line(last_pos[1]))
-    return vim.api.nvim_buf_get_text(0, first_pos[1] - 1, first_pos[2] - 1, last_pos[1] - 1, last_pos[2], {})
-end
-
 -- Adds some text into the buffer at a given position.
 ---@param pos Position The position to be inserted at.
 ---@param text string[] The text to be added.
@@ -42,33 +28,11 @@ local insert_text = function(pos, text)
     vim.api.nvim_buf_set_text(0, pos[1] - 1, pos[2] - 1, pos[1] - 1, pos[2] - 1, text)
 end
 
--- Replaces a given selection with a set of lines.
----@param selection? Selection The given selection.
----@param text string[] The given text to replace the selection.
-local change_text = function(selection, text)
-    if not selection then
-        return
-    end
-    local first_pos, last_pos = selection.first_pos, selection.last_pos
-    vim.api.nvim_buf_set_text(0, first_pos[1] - 1, first_pos[2] - 1, last_pos[1] - 1, last_pos[2], text)
-end
-
---[====================================================================================================================[
-                                                 Cursor helper functions
---]====================================================================================================================]
-
 -- Sets the position of the cursor, 1-indexed.
----@param pos Position? The given position.
+---@param pos Position The given position.
 local set_curpos = function(pos)
-    if not pos then
-        return
-    end
     vim.api.nvim_win_set_cursor(0, { pos[1], pos[2] - 1 })
 end
-
---[====================================================================================================================[
-                                                 Mark helper functions
---]====================================================================================================================]
 
 -- Gets the row and column for a mark, 1-indexed, if it exists, returns nil otherwise.
 ---@param mark string The mark whose position will be returned.
@@ -87,10 +51,6 @@ local set_mark = function(mark, position)
         vim.api.nvim_buf_set_mark(0, mark, position[1], position[2] - 1, {})
     end
 end
-
---[====================================================================================================================[
-                                             Byte indexing helper functions
---]====================================================================================================================]
 
 -- Gets the position of the first byte of a character, according to the UTF-8 standard.
 ---@param pos Position The position of any byte in the character.
@@ -133,29 +93,11 @@ local get_last_byte = function(pos)
     return pos
 end
 
---[====================================================================================================================[
-                                                 Surround helper functions
---]====================================================================================================================]
-
--- Parse optional argument.
----@param opts table|nil optional keyword arguments table
----@param key string key of argumnet
----@param default any default value
----@return any @The value of parameter.
-local parse_arg = function(opts, key, default)
-    if opts and opts[key] ~= nil then
-        return opts[key]
-    else
-        return default
-    end
-end
-
 -- Applies a specified surround text `before` and `after` at a selected within the current buffer.
 ---@param before string The string to insert before the selected text.
 ---@param after string The string to insert after the selected text.
----@param opts table|nil Optional keyword arguments:
---- - remove: Remove surround if possible (default true).
-local inline_surround = function(before, after, opts)
+---@param remove boolean|nil Remove surround if possible (default true).
+local inline_surround = function(before, after, remove)
     local s = get_first_byte(get_mark('<'))
     local e = get_last_byte(get_mark('>'))
 
@@ -169,11 +111,9 @@ local inline_surround = function(before, after, opts)
         e[2] = #get_line(e[1])
     end
 
-    -- Parsing Options
-    local remove = parse_arg(opts, 'remove', true)
+    remove = vim.F.if_nil(remove, true)
 
-    local selection = { first_pos = s, last_pos = e }
-    local text = get_text(selection)
+    local text = vim.api.nvim_buf_get_text(0, s[1] - 1, s[2] - 1, e[1] - 1, e[2], {})
 
     local first = text[1]:sub(1, #before) == before
     local last = text[#text]:sub(-#after) == after
@@ -185,7 +125,8 @@ local inline_surround = function(before, after, opts)
         text[1] = text[1]:sub(#before + 1, -1)
         text[#text] = text[#text]:sub(1, -#after - 1)
 
-        change_text(selection, text)
+        -- Change_text
+        vim.api.nvim_buf_set_text(0, s[1] - 1, s[2] - 1, e[1] - 1, e[2], text)
 
         if is_sameline then
             e[2] = e[2] - #before - #after
@@ -210,9 +151,8 @@ end
 -- Applies a specified surround text `before` and `after` text to the selected newline within the current buffer.
 ---@param before string The string to insert before the selected text.
 ---@param after string The string to insert after the selected text.
----@param opts table|nil Optional keyword arguments:
---- - remove: Remove surround if possible (default true).
-local newline_surround = function(before, after, opts)
+---@param remove boolean|nil Remove surround if possible (default true).
+local newline_surround = function(before, after, remove)
     local s = get_first_byte(get_mark('<'))
     local e = get_last_byte(get_mark('>'))
 
@@ -226,11 +166,9 @@ local newline_surround = function(before, after, opts)
         e[2] = #get_line(e[1])
     end
 
-    -- Parsing Options
-    local remove = parse_arg(opts, 'remove', true)
+    remove = vim.F.if_nil(remove, true)
 
-    local selection = { first_pos = s, last_pos = e }
-    local text = get_text(selection)
+    local text = vim.api.nvim_buf_get_text(0, s[1] - 1, s[2] - 1, e[1] - 1, e[2], {})
 
     local first = text[1] == before
     local last = text[#text] == after
@@ -259,9 +197,6 @@ local newline_surround = function(before, after, opts)
         set_curpos({ e[1] - 1, 1 })
     end
 end
---[====================================================================================================================[
-                                               Markdown surround functions
---]====================================================================================================================]
 
 function M.bold()
     inline_surround('**', '**')
@@ -284,7 +219,7 @@ function M.link()
         if href == nil then
             return
         end
-        inline_surround('[', '](' .. href .. ')', { remove = false })
+        inline_surround('[', '](' .. href .. ')', false)
     end)
 end
 
@@ -294,10 +229,6 @@ function M.inline_code()
         vim.log.levels.WARN
     )
 end
-
---[====================================================================================================================[
-                                                   Setup Function
---]====================================================================================================================]
 
 function M.setup(opts)
     opts = opts or {}
