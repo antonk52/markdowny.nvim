@@ -93,59 +93,227 @@ local get_last_byte = function(pos)
     return pos
 end
 
--- Applies a specified surround text `before` and `after` at a selected within the current buffer.
+-- Check if text has surround markers at both ends.
+---@param text string The text to check.
+---@param before string The marker that should appear at the start.
+---@param after string The marker that should appear at the end.
+---@return boolean @True if text has both markers.
+---@nodiscard
+local has_surround_markers = function(text, before, after)
+    if #text < #before + #after then
+        return false
+    end
+    return text:sub(1, #before) == before and text:sub(-#after) == after
+end
+
+-- Remove surround markers from text.
+---@param text string The text to remove markers from.
+---@param before string The marker to remove from the start.
+---@param after string The marker to remove from the end.
+---@return string @The text with markers removed.
+---@nodiscard
+local remove_surround_markers = function(text, before, after)
+    if not has_surround_markers(text, before, after) then
+        return text
+    end
+    return text:sub(#before + 1, -#after - 1)
+end
+
+-- Add surround markers to text.
+---@param text string The text to add markers to.
+---@param before string The marker to add at the start.
+---@param after string The marker to add at the end.
+---@return string @The text with markers added.
+---@nodiscard
+local add_surround_markers = function(text, before, after)
+    return before .. text .. after
+end
+
+-- Extract text from visual selection based on mode.
+---@param start_pos Position The start position of the selection.
+---@param end_pos Position The end position of the selection.
+---@param is_block boolean Whether this is visual block mode.
+---@return string[] @Array of text lines from the selection.
+---@nodiscard
+local extract_visual_text = function(start_pos, end_pos, is_block)
+    local text = {}
+    if is_block then
+        -- Visual block mode: extract column range from each line with bounds checking
+        for i = start_pos[1], end_pos[1] do
+            local line = get_line(i)
+            local line_length = #line
+            -- Clamp column positions to line length
+            local col_start = math.min(start_pos[2], line_length + 1)
+            local col_end = math.min(end_pos[2], line_length)
+            if col_start <= line_length then
+                table.insert(text, line:sub(col_start, col_end))
+            else
+                table.insert(text, '')
+            end
+        end
+    else
+        -- Normal visual mode
+        text = vim.api.nvim_buf_get_text(0, start_pos[1] - 1, start_pos[2] - 1, end_pos[1] - 1, end_pos[2], {})
+    end
+    return text
+end
+
+-- Get column boundaries for a line in the selection.
+---@param line_num integer The line number (1-indexed).
+---@param start_pos Position The start position of the selection.
+---@param end_pos Position The end position of the selection.
+---@param is_block boolean Whether this is visual block mode.
+---@return integer, integer @Column start and end positions.
+---@nodiscard
+local get_column_bounds = function(line_num, start_pos, end_pos, is_block)
+    if is_block then
+        return start_pos[2], end_pos[2]
+    else
+        local col_start = (line_num == start_pos[1]) and start_pos[2] or 1
+        local col_end = (line_num == end_pos[1]) and end_pos[2] or #get_line(line_num)
+        return col_start, col_end
+    end
+end
+
+-- Apply a text transformation to a line in the buffer.
+---@param line_num integer The line number (1-indexed).
+---@param col_start integer The starting column (1-indexed).
+---@param col_end integer The ending column (1-indexed).
+---@param replacement_text string The text to replace the selection with.
+---@return integer @The new end column position.
+---@nodiscard
+local apply_line_transformation = function(line_num, col_start, col_end, replacement_text)
+    local full_line = get_line(line_num)
+    local new_line = full_line:sub(1, col_start - 1) .. replacement_text .. full_line:sub(col_end + 1)
+    vim.api.nvim_buf_set_lines(0, line_num - 1, line_num, false, {new_line})
+    return col_start + #replacement_text - 1
+end
+
+-- Check if all lines in an array have surround markers.
+---@param text string[] Array of text lines to check.
+---@param before string The marker that should appear at the start of each line.
+---@param after string The marker that should appear at the end of each line.
+---@return boolean @True if all lines have both markers.
+---@nodiscard
+local check_all_lines_have_surround = function(text, before, after)
+    for _, line in ipairs(text) do
+        if not has_surround_markers(line, before, after) then
+            return false
+        end
+    end
+    return true
+end
+
+-- Applies surround markers before and after selected text in the current buffer.
+-- Supports three modes:
+--   1. Single-line: Wraps entire selection with markers
+--   2. Multi-line visual: Adds markers to the beginning/end of each selected line
+--   3. Visual block: Adds markers to the beginning/end of the block column range on each line
+-- If `remove` is true and all selected text already has markers, removes them instead (toggle behavior).
 ---@param before string The string to insert before the selected text.
 ---@param after string The string to insert after the selected text.
 ---@param remove boolean|nil Remove surround if possible (default true).
 local inline_surround = function(before, after, remove)
-    local s = get_first_byte(get_mark('<'))
-    local e = get_last_byte(get_mark('>'))
+    local start_pos = get_first_byte(get_mark('<'))
+    local end_pos = get_last_byte(get_mark('>'))
 
-    if s == nil or e == nil then
+    -- Validate marks exist
+    if start_pos == nil or end_pos == nil then
         return
     end
 
     -- Manually count chars of last selected line in V-LINE mode due
     -- to '>' reaching max int value. Address if it's neovim bug.
     if vim.fn.visualmode() == 'V' then
-        e[2] = #get_line(e[1])
+        end_pos[2] = #get_line(end_pos[1])
+    end
+
+    -- Validate selection range
+    if start_pos[1] > end_pos[1] or (start_pos[1] == end_pos[1] and start_pos[2] > end_pos[2]) then
+        vim.notify('[markdowny.nvim] Invalid selection range', vim.log.levels.WARN)
+        return
     end
 
     remove = vim.F.if_nil(remove, true)
 
-    local text = vim.api.nvim_buf_get_text(0, s[1] - 1, s[2] - 1, e[1] - 1, e[2], {})
+    local is_single_line = start_pos[1] == end_pos[1]
+    local visual_mode = vim.fn.visualmode()
+    local is_block = visual_mode == '\22'
 
-    local first = text[1]:sub(1, #before) == before
-    local last = text[#text]:sub(-#after) == after
+    if is_single_line then
+        -- Single-line mode: wrap entire selection with markers
+        local text = vim.api.nvim_buf_get_text(0, start_pos[1] - 1, start_pos[2] - 1, end_pos[1] - 1, end_pos[2], {})
+        local selected_text = text[1]
+        local is_removing = has_surround_markers(selected_text, before, after) and remove
 
-    local is_removing = first and last and remove
-    local is_sameline = s[1] == e[1]
-
-    if is_removing then
-        text[1] = text[1]:sub(#before + 1, -1)
-        text[#text] = text[#text]:sub(1, -#after - 1)
-
-        -- Change_text
-        vim.api.nvim_buf_set_text(0, s[1] - 1, s[2] - 1, e[1] - 1, e[2], text)
-
-        if is_sameline then
-            e[2] = e[2] - #before - #after
+        if is_removing then
+            local transformed_text = remove_surround_markers(selected_text, before, after)
+            vim.api.nvim_buf_set_text(0, start_pos[1] - 1, start_pos[2] - 1, end_pos[1] - 1, end_pos[2], {transformed_text})
+            end_pos[2] = end_pos[2] - #before - #after
         else
-            e[2] = e[2] - #after
+            insert_text(start_pos, { before })
+            end_pos[2] = end_pos[2] + #before + 1
+            insert_text(end_pos, { after })
+            end_pos[2] = end_pos[2] + #after - 1
         end
     else
-        insert_text(s, { before })
-        e[2] = e[2] + 1
+        -- Multi-line mode: add markers to beginning/end of each line
+        local text = extract_visual_text(start_pos, end_pos, is_block)
 
-        if is_sameline then
-            e[2] = e[2] + #before
+        -- In block mode, we need to check markers on trimmed content
+        local is_removing
+        if is_block then
+            is_removing = true
+            if remove then
+                for _, line in ipairs(text) do
+                    local trimmed = line:match('^%s*(.-)%s*$')
+                    if not has_surround_markers(trimmed, before, after) then
+                        is_removing = false
+                        break
+                    end
+                end
+            else
+                is_removing = false
+            end
+        else
+            is_removing = remove and check_all_lines_have_surround(text, before, after)
         end
 
-        insert_text(e, { after })
-        e[2] = e[2] + #after - 1
+        for i = start_pos[1], end_pos[1] do
+            local line_idx = i - start_pos[1] + 1
+            local col_start, col_end = get_column_bounds(i, start_pos, end_pos, is_block)
+            local selected_text = text[line_idx]
+            local transformed_text
+
+            if is_block then
+                -- In block mode, preserve leading/trailing whitespace outside markers
+                local leading_ws = selected_text:match('^(%s*)')
+                local trailing_ws = selected_text:match('(%s*)$')
+                local content = selected_text:match('^%s*(.-)%s*$')
+
+                if is_removing then
+                    content = remove_surround_markers(content, before, after)
+                else
+                    content = add_surround_markers(content, before, after)
+                end
+
+                transformed_text = leading_ws .. content .. trailing_ws
+            else
+                if is_removing then
+                    transformed_text = remove_surround_markers(selected_text, before, after)
+                else
+                    transformed_text = add_surround_markers(selected_text, before, after)
+                end
+            end
+
+            local new_end_col = apply_line_transformation(i, col_start, col_end, transformed_text)
+            if i == end_pos[1] then
+                end_pos[2] = new_end_col
+            end
+        end
     end
 
-    set_mark('>', e)
+    set_mark('>', end_pos)
 end
 
 -- Applies a specified surround text `before` and `after` text to the selected newline within the current buffer.
