@@ -133,22 +133,26 @@ end
 ---@param start_pos Position The start position of the selection.
 ---@param end_pos Position The end position of the selection.
 ---@param is_block boolean Whether this is visual block mode.
+---@param block_left_col integer|nil Left byte column for block mode.
+---@param block_right_col integer|nil Right byte column for block mode.
 ---@return string[] @Array of text lines from the selection.
 ---@nodiscard
-local extract_visual_text = function(start_pos, end_pos, is_block)
+local extract_visual_text = function(start_pos, end_pos, is_block, block_left_col, block_right_col)
     local text = {}
     if is_block then
-        -- Visual block mode: extract column range from each line with bounds checking
+        local col_start = block_left_col or start_pos[2]
+        local col_end = block_right_col or end_pos[2]
+
         for i = start_pos[1], end_pos[1] do
             local line = get_line(i)
             local line_length = #line
-            -- Clamp column positions to line length
-            local col_start = math.min(start_pos[2], line_length + 1)
-            local col_end = math.min(end_pos[2], line_length)
-            if col_start <= line_length then
-                table.insert(text, line:sub(col_start, col_end))
-            else
+
+            if col_start > line_length then
                 table.insert(text, '')
+            elseif col_end > line_length then
+                table.insert(text, line:sub(col_start, line_length))
+            else
+                table.insert(text, line:sub(col_start, col_end))
             end
         end
     else
@@ -163,10 +167,14 @@ end
 ---@param start_pos Position The start position of the selection.
 ---@param end_pos Position The end position of the selection.
 ---@param is_block boolean Whether this is visual block mode.
+---@param block_left_col integer|nil Left byte column for block mode.
+---@param block_right_col integer|nil Right byte column for block mode.
 ---@return integer, integer @Column start and end positions.
 ---@nodiscard
-local get_column_bounds = function(line_num, start_pos, end_pos, is_block)
-    if is_block then
+local get_column_bounds = function(line_num, start_pos, end_pos, is_block, block_left_col, block_right_col)
+    if is_block and block_left_col and block_right_col then
+        return block_left_col, block_right_col
+    elseif is_block then
         return start_pos[2], end_pos[2]
     else
         local col_start = (line_num == start_pos[1]) and start_pos[2] or 1
@@ -178,13 +186,16 @@ end
 -- Apply a text transformation to a line in the buffer.
 ---@param line_num integer The line number (1-indexed).
 ---@param col_start integer The starting column (1-indexed).
----@param col_end integer The ending column (1-indexed).
+---@param col_end integer The ending column (1-indexed, may extend beyond line length).
 ---@param replacement_text string The text to replace the selection with.
 ---@return integer @The new end column position.
 ---@nodiscard
 local apply_line_transformation = function(line_num, col_start, col_end, replacement_text)
     local full_line = get_line(line_num)
-    local new_line = full_line:sub(1, col_start - 1) .. replacement_text .. full_line:sub(col_end + 1)
+    local line_length = #full_line
+    local prefix = full_line:sub(1, col_start - 1)
+    local suffix = col_end < line_length and full_line:sub(col_end + 1) or ''
+    local new_line = prefix .. replacement_text .. suffix
     vim.api.nvim_buf_set_lines(0, line_num - 1, line_num, false, {new_line})
     return col_start + #replacement_text - 1
 end
@@ -204,6 +215,53 @@ local check_all_lines_have_surround = function(text, before, after)
     return true
 end
 
+-- Exit visual mode if still active, capturing block boundaries for block mode.
+-- Must be called from <Cmd> mappings (before visual mode exits) to get true
+-- block columns. Neovim caps mark columns to line length, so we use
+-- winsaveview().curswant to preserve the true cursor column on short lines.
+---@return { block_info: table|nil, visual_mode: string|nil }
+local exit_visual_if_active = function()
+    local mode = vim.fn.mode()
+    local result = { block_info = nil, visual_mode = nil }
+
+    if mode:sub(1, 1) == '\22' then
+        local anchor = vim.fn.getpos('v')
+        local cursor_line = vim.fn.line('.')
+        local curswant = vim.fn.winsaveview().curswant
+        local anchor_col = anchor[3] -- 1-indexed byte column
+        local cursor_col = curswant + 1 -- Convert 0-indexed to 1-indexed
+
+        -- Handle $ (MAXCOL) - curswant will be a very large number
+        if cursor_col > 10000 then
+            local start_line = math.min(anchor[2], cursor_line)
+            local end_line = math.max(anchor[2], cursor_line)
+            local max_len = 0
+            for i = start_line, end_line do
+                max_len = math.max(max_len, #get_line(i))
+            end
+            cursor_col = max_len
+        end
+
+        result.block_info = {
+            start_line = math.min(anchor[2], cursor_line),
+            end_line = math.max(anchor[2], cursor_line),
+            left_col = math.min(anchor_col, cursor_col),
+            right_col = math.max(anchor_col, cursor_col),
+        }
+        result.visual_mode = '\22'
+    elseif mode == 'v' or mode == 'V' then
+        result.visual_mode = mode
+    end
+
+    -- Exit visual mode if active (sets the '<' and '>' marks)
+    if result.visual_mode then
+        local esc = vim.api.nvim_replace_termcodes('<Esc>', true, false, true)
+        vim.api.nvim_feedkeys(esc, 'nx', false)
+    end
+
+    return result
+end
+
 -- Applies surround markers before and after selected text in the current buffer.
 -- Supports three modes:
 --   1. Single-line: Wraps entire selection with markers
@@ -213,13 +271,26 @@ end
 ---@param before string The string to insert before the selected text.
 ---@param after string The string to insert after the selected text.
 ---@param remove boolean|nil Remove surround if possible (default true).
-local inline_surround = function(before, after, remove)
+---@param block_info table|nil Captured block boundaries from exit_visual_if_active().
+local inline_surround = function(before, after, remove, block_info)
+    local visual_mode = vim.fn.visualmode()
+    local is_block = visual_mode == '\22'
+
     local start_pos = get_first_byte(get_mark('<'))
     local end_pos = get_last_byte(get_mark('>'))
 
     -- Validate marks exist
     if start_pos == nil or end_pos == nil then
         return
+    end
+
+    -- In visual block mode, use captured block info for true boundaries
+    local block_left_col, block_right_col
+    if is_block and block_info then
+        block_left_col = block_info.left_col
+        block_right_col = block_info.right_col
+        start_pos[1] = block_info.start_line
+        end_pos[1] = block_info.end_line
     end
 
     -- Manually count chars of last selected line in V-LINE mode due
@@ -230,17 +301,17 @@ local inline_surround = function(before, after, remove)
 
     -- Validate selection range
     if start_pos[1] > end_pos[1] or (start_pos[1] == end_pos[1] and start_pos[2] > end_pos[2]) then
-        vim.notify('[markdowny.nvim] Invalid selection range', vim.log.levels.WARN)
-        return
+        if not is_block then
+            vim.notify('[markdowny.nvim] Invalid selection range', vim.log.levels.WARN)
+            return
+        end
     end
 
     remove = vim.F.if_nil(remove, true)
 
     local is_single_line = start_pos[1] == end_pos[1]
-    local visual_mode = vim.fn.visualmode()
-    local is_block = visual_mode == '\22'
 
-    if is_single_line then
+    if is_single_line and not is_block then
         -- Single-line mode: wrap entire selection with markers
         local text = vim.api.nvim_buf_get_text(0, start_pos[1] - 1, start_pos[2] - 1, end_pos[1] - 1, end_pos[2], {})
         local selected_text = text[1]
@@ -258,7 +329,7 @@ local inline_surround = function(before, after, remove)
         end
     else
         -- Multi-line mode: add markers to beginning/end of each line
-        local text = extract_visual_text(start_pos, end_pos, is_block)
+        local text = extract_visual_text(start_pos, end_pos, is_block, block_left_col, block_right_col)
 
         -- In block mode, we need to check markers on trimmed content
         local is_removing
@@ -281,7 +352,8 @@ local inline_surround = function(before, after, remove)
 
         for i = start_pos[1], end_pos[1] do
             local line_idx = i - start_pos[1] + 1
-            local col_start, col_end = get_column_bounds(i, start_pos, end_pos, is_block)
+            local col_start, col_end =
+                get_column_bounds(i, start_pos, end_pos, is_block, block_left_col, block_right_col)
             local selected_text = text[line_idx]
             local transformed_text
 
@@ -367,27 +439,32 @@ local newline_surround = function(before, after, remove)
 end
 
 function M.bold()
-    inline_surround('**', '**')
+    local ctx = exit_visual_if_active()
+    inline_surround('**', '**', nil, ctx.block_info)
 end
 
 function M.italic()
-    inline_surround('_', '_')
+    local ctx = exit_visual_if_active()
+    inline_surround('_', '_', nil, ctx.block_info)
 end
 
 function M.code()
-    if vim.fn.visualmode() == 'V' then
+    local ctx = exit_visual_if_active()
+    local visual_mode = ctx.visual_mode or vim.fn.visualmode()
+    if visual_mode == 'V' then
         newline_surround('```', '```')
     else
-        inline_surround('`', '`')
+        inline_surround('`', '`', nil, ctx.block_info)
     end
 end
 
 function M.link()
+    local ctx = exit_visual_if_active()
     vim.ui.input({ prompt = 'Href:' }, function(href)
         if href == nil then
             return
         end
-        inline_surround('[', '](' .. href .. ')', false)
+        inline_surround('[', '](' .. href .. ')', false, ctx.block_info)
     end)
 end
 
@@ -405,10 +482,10 @@ function M.setup(opts)
         desc = 'markdowny.nvim keymaps',
         pattern = opts.filetypes or {'markdown', 'gitcommit', 'hgcommit'},
         callback = function()
-            vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0, silent = true })
-            vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0, silent = true })
-            vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0, silent = true })
-            vim.keymap.set('v', '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0, silent = true })
+            vim.keymap.set('v', '<C-b>', "<Cmd>lua require('markdowny').bold()<CR>", { buffer = 0, silent = true })
+            vim.keymap.set('v', '<C-i>', "<Cmd>lua require('markdowny').italic()<CR>", { buffer = 0, silent = true })
+            vim.keymap.set('v', '<C-k>', "<Cmd>lua require('markdowny').link()<CR>", { buffer = 0, silent = true })
+            vim.keymap.set('v', '<C-e>', "<Cmd>lua require('markdowny').code()<CR>", { buffer = 0, silent = true })
         end,
     })
 end
