@@ -36,7 +36,7 @@ require('markdowny').setup({filetypes = {'markdown', 'txt'}})
 
 ## Default keymaps
 
-All in visual mode
+Normal and visual mode
 
 - `<C-k>`: Adds a link to visually selected text.
 - `<C-b>`: Toggles visually selected text to bold.
@@ -48,10 +48,10 @@ All in visual mode
 Alternatively to default keymaps you can use custom keymaps without calling `setup` function, make sure to map to a string rather than a Lua function. Here are the defaults:
 
 ```lua
-vim.keymap.set('v', '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0 })
-vim.keymap.set('v', '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
-vim.keymap.set('v', '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
-vim.keymap.set('v', '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0 })
+vim.keymap.set({'n', 'v'}, '<C-b>', ":lua require('markdowny').bold()<cr>", { buffer = 0 })
+vim.keymap.set({'n', 'v'}, '<C-i>', ":lua require('markdowny').italic()<cr>", { buffer = 0 })
+vim.keymap.set({'n', 'v'}, '<C-k>', ":lua require('markdowny').link()<cr>", { buffer = 0 })
+vim.keymap.set({'n', 'v'}, '<C-e>', ":lua require('markdowny').code()<cr>", { buffer = 0 })
 ```
 
 To apply the keymaps to specific filetypes, use `autocmd`:
